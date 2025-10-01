@@ -10,6 +10,48 @@ from classifier import (
     UNIT_PRICE
 )
 
+def convert_date_robust(date_series):
+    """
+    Excelの多様な日付形式に対応した堅牢な日付変換
+    - YYYYMMDD形式（20240902等）
+    - Excelシリアル値
+    - 一般的な日付文字列
+    """
+    result = pd.Series(pd.NaT, index=date_series.index)
+    
+    # 文字列に変換してクリーンアップ
+    str_dates = date_series.astype(str).str.strip()
+    
+    # 1. YYYYMMDD形式（8桁数字）を優先処理
+    mask_8digit = str_dates.str.match(r'^\d{8}$')
+    if mask_8digit.any():
+        result.loc[mask_8digit] = pd.to_datetime(
+            str_dates[mask_8digit], 
+            format='%Y%m%d', 
+            errors='coerce'
+        )
+    
+    # 2. Excelシリアル値（数値）を処理
+    numeric_dates = pd.to_numeric(date_series, errors='coerce')
+    serial_mask = numeric_dates.between(1, 73000) & result.isna()
+    if serial_mask.any():
+        result.loc[serial_mask] = pd.to_datetime(
+            numeric_dates[serial_mask], 
+            unit='D', 
+            origin='1899-12-30',
+            errors='coerce'
+        )
+    
+    # 3. その他の一般的な日付形式
+    remaining_mask = result.isna()
+    if remaining_mask.any():
+        result.loc[remaining_mask] = pd.to_datetime(
+            str_dates[remaining_mask], 
+            errors='coerce'
+        )
+    
+    return result
+
 # ページ設定
 st.set_page_config(
     page_title="📚 教材注文データ分析システム",
@@ -38,10 +80,7 @@ st.session_state.bulk_threshold = st.sidebar.number_input(
 def load_and_process_data(file):
     """Excelファイル読み込み・前処理"""
     try:
-        # 修正前：単一エンジンでの読み込み
-        # df = pd.read_excel(file)
-        
-        # 修正後：拡張子別エンジン選択
+        # 拡張子別エンジン選択
         filename = file.name.lower()
         if filename.endswith('.xlsx'):
             df = pd.read_excel(file, engine='openpyxl')
@@ -63,37 +102,11 @@ def load_and_process_data(file):
             '数量': '冊数'
         }, inplace=True)
         
-        # データ型変換
-        # データ型変換（YYYYMMDD形式対応）
-def convert_date_robust(date_series):
-    """YYYYMMDD形式（20240902等）を正しい日付に変換"""
-    # まず文字列化
-    str_dates = date_series.astype(str).str.strip()
-    
-    # 8桁数字（YYYYMMDD）を優先処理
-    mask_8digit = str_dates.str.match(r'^\d{8}$')
-    result = pd.Series(pd.NaT, index=date_series.index)
-    
-    # YYYYMMDD形式の変換
-    if mask_8digit.any():
-        result.loc[mask_8digit] = pd.to_datetime(
-            str_dates[mask_8digit], 
-            format='%Y%m%d', 
-            errors='coerce'
-        )
-    
-    # その他の形式（Excel日付等）
-    remaining = result.isna()
-    if remaining.any():
-        result.loc[remaining] = pd.to_datetime(date_series[remaining], errors='coerce')
-    
-    return result
-
-df['注文日'] = convert_date_robust(df['注文日'])
-
+        # データ型変換（堅牢な日付変換）
+        df['注文日'] = convert_date_robust(df['注文日'])
         df['冊数'] = pd.to_numeric(df['冊数'], errors='coerce').fillna(0).astype(int)
         df['塾名'] = df['塾名'].astype(str).str.strip()
-        df['商品名'] = df['商品名'].astype(str)
+        df['商品名'] = df['商品名'].astype(str).str.strip()
         
         # 無効データ除外
         df = df[df['冊数'] > 0]
@@ -103,6 +116,37 @@ df['注文日'] = convert_date_robust(df['注文日'])
         classification_results = df['商品名'].apply(classify_product_comprehensive)
         df_classified = pd.json_normalize(classification_results.tolist())
         df = pd.concat([df, df_classified], axis=1)
+        
+        # 🐛 デバッグ情報表示（問題解決の可視化）
+        with st.expander("🐛 データ診断情報"):
+            st.write("### 📊 読み込み統計")
+            st.write(f"- 総行数: {len(df):,}")
+            st.write(f"- 有効日付数: {df['注文日'].notna().sum():,}")
+            st.write(f"- 日付変換失敗数: {df['注文日'].isna().sum():,}")
+            
+            st.write("### 📅 日付変換結果")
+            if df['注文日'].notna().any():
+                date_range = f"{df['注文日'].min().strftime('%Y/%m/%d')} ～ {df['注文日'].max().strftime('%Y/%m/%d')}"
+                st.write(f"- 日付範囲: {date_range}")
+                
+                # 年別分布
+                date_years = df['注文日'].dt.year.value_counts().sort_index()
+                st.write("- 年別件数:", date_years.to_dict())
+            else:
+                st.write("⚠️ 有効な日付データがありません")
+            
+            st.write("### 🏫 学年分類結果")
+            grade_counts = df['学年'].value_counts(dropna=False)
+            st.write(f"- 分類済み: {grade_counts.sum():,}件")
+            st.write(f"- 学年不明: {df['学年'].isna().sum():,}件")
+            
+            # 学年不明の商品例
+            unclassified = df[df['学年'].isna()]
+            if not unclassified.empty:
+                st.write("### ⚠️ 学年不明の商品例（上位10件）")
+                product_samples = unclassified['商品名'].value_counts().head(10)
+                for product, count in product_samples.items():
+                    st.write(f"- {product}: {count}件")
         
         return df
         
@@ -115,6 +159,7 @@ def calculate_revenue_potential(school_data, tab_name):
     if tab_name != "通年":
         return 0
     
+    # 通年・中学生データのみ対象
     target_data = school_data[
         (school_data['カテゴリ'] == '通年') & 
         (school_data['学年'].isin(['中1', '中2', '中3']))
@@ -134,9 +179,12 @@ def calculate_revenue_potential(school_data, tab_name):
     
     if not c3_data.empty:
         c3_subject_totals = c3_data.groupby('科目')['冊数'].sum()
+        
+        # 中3英数基準（最大値）
         c3_eng_math_orders = c3_subject_totals.reindex(['英語', '数学'], fill_value=0)
         c3_eng_math_max = c3_eng_math_orders.max() if not c3_eng_math_orders.empty else 0
         
+        # 中3国理社基準（平均値）
         c3_krs_orders = c3_subject_totals.reindex(['国語', '理科', '社会'], fill_value=0)
         c3_krs_orders = c3_krs_orders[c3_krs_orders > 0]
         c3_krs_avg = int(np.round(c3_krs_orders.mean())) if not c3_krs_orders.empty else int(np.round(c3_eng_math_max / 2))
@@ -147,29 +195,33 @@ def calculate_revenue_potential(school_data, tab_name):
         grade_subject_totals = grade_data.groupby('科目')['冊数'].sum() if not grade_data.empty else pd.Series()
         
         if not grade_data.empty:
+            # 実績がある学年：その学年の最大科目冊数を英数基準とする
             grade_max = grade_subject_totals.max() if not grade_subject_totals.empty else 0
             eng_math_base = grade_max
             
+            # 国理社基準：国理社の平均、なければ英数基準の半分
             krs_orders = grade_subject_totals.reindex(['国語', '理科', '社会'], fill_value=0)
             krs_orders = krs_orders[krs_orders > 0]
             krs_base = int(np.round(krs_orders.mean())) if not krs_orders.empty else int(np.round(eng_math_base / 2))
         else:
+            # 実績がない学年：中3基準から比率計算
             if grade == '中1':
                 eng_math_base = int(np.round(c3_eng_math_max * 2 / 4))
                 krs_base = int(np.round(c3_krs_avg * 2 / 4))
             elif grade == '中2':
                 eng_math_base = int(np.round(c3_eng_math_max * 3 / 4))
                 krs_base = int(np.round(c3_krs_avg * 3 / 4))
-            else:
+            else:  # 中3
                 eng_math_base = c3_eng_math_max
                 krs_base = c3_krs_avg
         
+        # 未注文科目の見込計算
         for subject in middle_subjects:
             current_orders = grade_subject_totals.get(subject, 0)
             if current_orders == 0:
                 if subject in ['英語', '数学']:
                     total_potential += eng_math_base * UNIT_PRICE
-                else:
+                else:  # 国語、理科、社会
                     total_potential += krs_base * UNIT_PRICE
     
     return total_potential
@@ -180,11 +232,13 @@ def filter_data_by_tab(data, tab_name):
         return data[data['カテゴリ'] == '通年']
     elif tab_name == "入試":
         return data[data['カテゴリ'] == '入試']
-    else:
+    else:  # 春期、夏期、冬期
         return data[data['カテゴリ'] == tab_name]
 
 def display_grade_section(data, grade, tab_name, bulk_threshold):
     """学年セクション表示"""
+    
+    # 高校生：冊数のみ、色付け・日付強調なし
     if grade == "高校":
         st.markdown(f"### {grade} " + "━" * 50)
         if data.empty:
@@ -195,6 +249,7 @@ def display_grade_section(data, grade, tab_name, bulk_threshold):
                 st.write(f"{product} {total}冊")
         return
     
+    # 小学生・中学生の共通処理
     st.markdown(f"### {grade} " + "━" * 50)
     
     if data.empty:
@@ -204,15 +259,18 @@ def display_grade_section(data, grade, tab_name, bulk_threshold):
             st.write(f"{grade}：要確認")
         return
     
+    # 科目別表示（季節タブでは合本も科目扱い）
     subjects = ['国語', '算数', '数学', '英語', '理科', '社会', 'その他']
     if tab_name in ['春期', '夏期', '冬期']:
         subjects.append('合本')
     
+    # 同学年内最大冊数（赤文字判定用）
     subject_totals = data.groupby('科目')['冊数'].sum()
     max_subject_total = subject_totals.max() if not subject_totals.empty else 0
     
     for subject in subjects:
         if subject == '合本' and tab_name in ['春期', '夏期', '冬期']:
+            # 合本商品を科目として表示
             composite_data = data[data['合本フラグ'] == True]
             if not composite_data.empty:
                 display_subject_materials(composite_data, subject, max_subject_total, bulk_threshold, is_composite=True)
@@ -225,8 +283,11 @@ def display_grade_section(data, grade, tab_name, bulk_threshold):
 
 def display_subject_materials(data, subject, max_subject_total, bulk_threshold, is_composite=False):
     """科目別教材表示"""
+    
+    # 教材別集計（同一教材・同一日の合算）
     daily_summary = data.groupby(['商品名', '注文日'])['冊数'].sum().reset_index()
     
+    # 教材別の総冊数と最大注文日情報
     material_summary = []
     for product in daily_summary['商品名'].unique():
         product_data = daily_summary[daily_summary['商品名'] == product]
@@ -242,6 +303,7 @@ def display_subject_materials(data, subject, max_subject_total, bulk_threshold, 
             'max_day_date': max_day_date
         })
     
+    # 科目合計冊数（赤文字判定用）
     subject_total = sum(item['total'] for item in material_summary)
     
     for item in material_summary:
@@ -250,20 +312,23 @@ def display_subject_materials(data, subject, max_subject_total, bulk_threshold, 
         max_day_books = item['max_day_books']
         max_day_date = item['max_day_date']
         
+        # 表示名決定
         if is_composite:
             display_name = f"📚 {product_name}（合本）"
         else:
             display_name = f"{subject} {product_name}"
         
+        # 冊数の色分け判定（赤文字：学年内最大の半分以下）
         books_display = f"{total_books}冊"
         if max_subject_total > 0 and subject_total <= max_subject_total // 2:
             books_display = f"**{total_books}冊**"
         
+        # 日付表示（YYYY/MM/DD形式）と色分け判定（緑太字：大口発注）
         if pd.isna(max_day_date):
-    date_str = '日付不明'
-else:
-    date_str = max_day_date.strftime('%Y/%m/%d')
-
+            date_str = '日付不明'
+        else:
+            date_str = max_day_date.strftime('%Y/%m/%d')
+        
         if max_day_books >= bulk_threshold:
             date_display = f"**{date_str}**"
         else:
@@ -322,6 +387,7 @@ if uploaded_file is not None:
                     total_books = school_data['冊数'].sum()
                     
                     if tab_name == "通年":
+                        # PC版・通年タブのみ売上増見込表示
                         revenue_potential = calculate_revenue_potential(school_data, tab_name)
                         st.markdown(f"### 【{selected_school}】💰売上増見込：+¥{revenue_potential:,}　年間実績：{total_books:,}冊")
                     else:
@@ -330,7 +396,9 @@ if uploaded_file is not None:
                     st.markdown(f"🔧 大口設定：同日{st.session_state.bulk_threshold}冊以上")
                     
                     if not tab_data.empty:
+                        # 学年別表示順序
                         if tab_name == "通年":
+                            # 小学生：最初に注文がある学年から小6まで
                             elementary_grades = ['小1', '小2', '小3', '小4', '小5', '小6']
                             first_elem_grade = None
                             for grade in elementary_grades:
@@ -343,43 +411,45 @@ if uploaded_file is not None:
                                 start_idx = elementary_grades.index(first_elem_grade)
                                 display_grades.extend(elementary_grades[start_idx:])
                             
+                            # 中学生は常に表示
                             display_grades.extend(['中1', '中2', '中3'])
                             
+                            # 高校生
                             if not tab_data[tab_data['学年'] == '高校'].empty:
                                 display_grades.append('高校')
                                 
                         elif tab_name == "入試":
-                            display_grades = ['中3']
-                        else:
-                            display_grades = ['中1', '中2', '中3']
+                            display_grades = ['中3']  # 入試は中3のみ
+                        else:  # 春期、夏期、冬期
+                            display_grades = ['中1', '中2', '中3']  # 中学生のみ
                         
-                                                for grade in display_grades:
+                        # 各学年の表示
+                        for grade in display_grades:
                             grade_data = tab_data[tab_data['学年'] == grade]
                             display_grade_section(grade_data, grade, tab_name, st.session_state.bulk_threshold)
                         
-                        # 学年不明データを「全体その他」として表示
-                        unclassified_data = tab_data[tab_data['学年'].isna()]
-                        if not unclassified_data.empty:
-                            st.markdown("### 全体その他 " + "━" * 50)
-                            product_summary = unclassified_data.groupby('商品名')['冊数'].sum().sort_values(ascending=False)
-                            for product, total in product_summary.items():
-                                # 最大注文日の取得
-                                product_data = unclassified_data[unclassified_data['商品名'] == product]
-                                daily_summary = product_data.groupby('注文日')['冊数'].sum()
-                                max_day = daily_summary.idxmax()
-                                max_day_books = daily_summary.max()
-                                
-                                # 日付・大口判定
-                                date_str = max_day.strftime('%Y/%m/%d') if pd.notna(max_day) else '日付不明'
-                                if max_day_books >= st.session_state.bulk_threshold:
-                                    date_display = f"**{date_str}**"
-                                else:
-                                    date_display = date_str
-                                
-                                st.write(f"{product} {total}冊（{date_display} {max_day_books}冊）")
-
+                        # 通年タブのみ：学年不明データを「全体その他」として表示
+                        if tab_name == "通年":
+                            unclassified_data = tab_data[tab_data['学年'].isna()]
+                            if not unclassified_data.empty:
+                                st.markdown("### 全体その他 " + "━" * 50)
+                                product_summary = unclassified_data.groupby('商品名')['冊数'].sum().sort_values(ascending=False)
+                                for product, total in product_summary.items():
+                                    product_data = unclassified_data[unclassified_data['商品名'] == product]
+                                    daily_summary = product_data.groupby('注文日')['冊数'].sum()
+                                    max_day = daily_summary.idxmax()
+                                    max_day_books = daily_summary.max()
+                                    
+                                    date_str = max_day.strftime('%Y/%m/%d') if pd.notna(max_day) else '日付不明'
+                                    if max_day_books >= st.session_state.bulk_threshold:
+                                        date_display = f"**{date_str}**"
+                                    else:
+                                        date_display = date_str
+                                    
+                                    st.write(f"{product} {total}冊（{date_display} {max_day_books}冊）")
                     
                     else:
+                        # タブに該当データがない場合
                         if tab_name == "入試":
                             st.markdown("⚠️ **中3入試教材：要確認**")
                         elif tab_name in ["春期", "夏期", "冬期"]:
@@ -407,7 +477,16 @@ else:
         - **合本教材識別**: 📚マークで視覚的に区別
         - **大口発注日**: 緑太字で強調表示
         - **要確認項目**: ⚠️マークで未開拓領域を明示
+        - **YYYYMMDD日付対応**: 20240902形式を2024/09/02で正しく表示
+        - **学年不明教材表示**: 通年タブの「全体その他」セクション
+        
+        ### 🐛 診断機能
+        データアップロード後、「データ診断情報」を展開すると：
+        - 日付変換の成功/失敗状況
+        - 年別データ分布
+        - 学年分類の結果
+        - 学年不明商品の具体例
         
         ### 🔧 カスタマイズ
-        分類ロジックは classifier.py で調整可能です。
+        分類ロジックは `classifier.py` で調整可能です。
         """)
