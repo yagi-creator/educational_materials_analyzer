@@ -64,7 +64,33 @@ def load_and_process_data(file):
         }, inplace=True)
         
         # データ型変換
-        df['注文日'] = pd.to_datetime(df['注文日'], errors='coerce')
+        # データ型変換（YYYYMMDD形式対応）
+def convert_date_robust(date_series):
+    """YYYYMMDD形式（20240902等）を正しい日付に変換"""
+    # まず文字列化
+    str_dates = date_series.astype(str).str.strip()
+    
+    # 8桁数字（YYYYMMDD）を優先処理
+    mask_8digit = str_dates.str.match(r'^\d{8}$')
+    result = pd.Series(pd.NaT, index=date_series.index)
+    
+    # YYYYMMDD形式の変換
+    if mask_8digit.any():
+        result.loc[mask_8digit] = pd.to_datetime(
+            str_dates[mask_8digit], 
+            format='%Y%m%d', 
+            errors='coerce'
+        )
+    
+    # その他の形式（Excel日付等）
+    remaining = result.isna()
+    if remaining.any():
+        result.loc[remaining] = pd.to_datetime(date_series[remaining], errors='coerce')
+    
+    return result
+
+df['注文日'] = convert_date_robust(df['注文日'])
+
         df['冊数'] = pd.to_numeric(df['冊数'], errors='coerce').fillna(0).astype(int)
         df['塾名'] = df['塾名'].astype(str).str.strip()
         df['商品名'] = df['商品名'].astype(str)
@@ -233,7 +259,11 @@ def display_subject_materials(data, subject, max_subject_total, bulk_threshold, 
         if max_subject_total > 0 and subject_total <= max_subject_total // 2:
             books_display = f"**{total_books}冊**"
         
-        date_str = max_day_date.strftime('%m/%d')
+        if pd.isna(max_day_date):
+    date_str = '日付不明'
+else:
+    date_str = max_day_date.strftime('%Y/%m/%d')
+
         if max_day_books >= bulk_threshold:
             date_display = f"**{date_str}**"
         else:
@@ -323,9 +353,31 @@ if uploaded_file is not None:
                         else:
                             display_grades = ['中1', '中2', '中3']
                         
-                        for grade in display_grades:
+                                                for grade in display_grades:
                             grade_data = tab_data[tab_data['学年'] == grade]
                             display_grade_section(grade_data, grade, tab_name, st.session_state.bulk_threshold)
+                        
+                        # 学年不明データを「全体その他」として表示
+                        unclassified_data = tab_data[tab_data['学年'].isna()]
+                        if not unclassified_data.empty:
+                            st.markdown("### 全体その他 " + "━" * 50)
+                            product_summary = unclassified_data.groupby('商品名')['冊数'].sum().sort_values(ascending=False)
+                            for product, total in product_summary.items():
+                                # 最大注文日の取得
+                                product_data = unclassified_data[unclassified_data['商品名'] == product]
+                                daily_summary = product_data.groupby('注文日')['冊数'].sum()
+                                max_day = daily_summary.idxmax()
+                                max_day_books = daily_summary.max()
+                                
+                                # 日付・大口判定
+                                date_str = max_day.strftime('%Y/%m/%d') if pd.notna(max_day) else '日付不明'
+                                if max_day_books >= st.session_state.bulk_threshold:
+                                    date_display = f"**{date_str}**"
+                                else:
+                                    date_display = date_str
+                                
+                                st.write(f"{product} {total}冊（{date_display} {max_day_books}冊）")
+
                     
                     else:
                         if tab_name == "入試":
