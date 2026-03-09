@@ -156,10 +156,10 @@ const app = {
         const file = input.files[0];
         if (!file) return;
 
-        // メモリ対策：既存データをクリア
         app.data = [];
         
         document.getElementById('spinner').classList.remove('hidden');
+        document.getElementById('loading-msg').classList.remove('hidden');
         
         const reader = new FileReader();
         reader.onload = async (e) => {
@@ -170,7 +170,6 @@ const app = {
                 const sheet = workbook.Sheets[sheetName];
                 const json = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
 
-                // 軽量化処理：必要な行のみ抽出
                 const rows = [];
                 for (let i = 1; i < json.length; i++) {
                     const row = json[i];
@@ -194,11 +193,9 @@ const app = {
                     at: `${now.getFullYear()}/${now.getMonth()+1}/${now.getDate()} ${now.getHours()}:${String(now.getMinutes()).padStart(2,'0')}`
                 };
 
-                // メモリ上でデータを設定
                 app.data = rows;
                 app.meta = meta;
 
-                // 保存を試行
                 try {
                     await localforage.setItem(CONFIG.KEY_DATA, rows);
                     await localforage.setItem(CONFIG.KEY_META, meta);
@@ -208,7 +205,6 @@ const app = {
                     alert('⚠️ データが大きすぎるため端末保存に失敗しました。\n\n✅ 検索機能は利用できます\n❌ アプリを閉じるとデータは消えます\n\n【推奨】PCでCSV形式に変換してから読み込んでください。');
                 }
 
-                // 保存成功/失敗に関わらず検索画面へ
                 app.showInfoBar();
                 app.showSearch();
 
@@ -217,7 +213,8 @@ const app = {
                 alert('❌ ファイルの読み込みに失敗しました。\n\n【原因】メモリ不足の可能性があります\n【解決策】PCで「CSV形式」で保存し直してから読み込んでください');
             } finally {
                 document.getElementById('spinner').classList.add('hidden');
-                input.value = ''; // 同じファイルを再選択可能にする
+                document.getElementById('loading-msg').classList.add('hidden');
+                input.value = '';
             }
         };
         reader.readAsArrayBuffer(file);
@@ -270,9 +267,8 @@ const app = {
 
         if (hits.length === 0) {
             container.innerHTML = '<div class="card">該当する塾が見つかりませんでした</div>';
-        } else if (hits.length === 1) {
-            app.showDetail(hits[0].name);
         } else {
+            // ★修正箇所：1件でも複数件でも必ずカードを表示してタップ待ちにする
             hits.forEach(h => {
                 const div = document.createElement('div');
                 div.className = 'card hit';
@@ -566,9 +562,9 @@ if ('serviceWorker' in navigator) {
 }
 </script>
 
-<!-- バージョン表示（bodyの閉じタグ直前） -->
+<!-- バージョン表示 -->
 <div style="text-align:center;font-size:10px;color:#9ca3af;margin:16px 0;">
-  ver: 2024-12-28-fix
+  ver: 2024-12-28-search-fix
 </div>
 
 </body>
