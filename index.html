@@ -6,6 +6,8 @@
     <title>売上検索Webアプリ</title>
     <link rel="manifest" href="manifest.json">
     <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+    <!-- 大容量データ保存用ライブラリ -->
+    <script src="https://cdn.jsdelivr.net/npm/localforage@1.10.0/dist/localforage.min.js"></script>
     <style>
         :root {
             --blue: #2563eb;
@@ -21,43 +23,34 @@
         body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: #111; }
         input, select, button { font-size: 16px; }
 
-        /* 共通レイアウト */
         .hidden { display: none !important; }
         .container { max-width: 800px; margin: 0 auto; padding: 0; }
         
-        /* ヘッダー */
         header { background: var(--blue); color: white; padding: 1rem; position: sticky; top: 0; z-index: 100; box-shadow: 0 2px 4px rgba(0,0,0,0.1); display: flex; justify-content: space-between; align-items: center; }
         header h1 { margin: 0; font-size: 1.2rem; font-weight: bold; }
         .reload-btn { background: rgba(255,255,255,0.2); border: none; color: white; padding: 0.5rem 1rem; border-radius: 4px; cursor: pointer; }
 
-        /* データ情報バー */
         .info-bar { background: var(--blue-dark); color: rgba(255,255,255,0.9); padding: 0.5rem 1rem; font-size: 0.8rem; text-align: center; }
 
-        /* 画面コンテナ */
         .view { padding: 1rem; }
 
-        /* ファイル読み込み画面 */
         .file-area { background: white; padding: 2rem; border-radius: 8px; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.05); margin-top: 2rem; }
         .file-btn { display: inline-block; background: var(--blue); color: white; padding: 1rem 2rem; border-radius: 8px; cursor: pointer; font-weight: bold; }
         
-        /* 検索画面 */
         .search-box { display: flex; gap: 8px; margin-bottom: 1rem; }
         .search-input { flex: 1; padding: 0.8rem; border: 1px solid var(--border); border-radius: 8px; outline: none; }
         .search-input:focus { border-color: var(--blue); }
         
-        /* カードリスト */
         .card { background: white; padding: 1rem; border-radius: 8px; margin-bottom: 0.8rem; box-shadow: 0 1px 3px rgba(0,0,0,0.05); cursor: pointer; border-left: 4px solid transparent; }
         .card:active { background: #f9fafb; }
         .card.hit { border-left-color: var(--blue); }
 
-        /* 詳細画面：集計表 */
         .summary-table { width: 100%; border-collapse: collapse; background: white; font-size: 0.85rem; margin-bottom: 1rem; }
         .summary-table th, .summary-table td { border: 1px solid var(--border); padding: 6px; text-align: right; }
         .summary-table th { background: #f8fafc; text-align: center; color: var(--gray); font-weight: normal; }
         .summary-table .col-cat { text-align: left; font-weight: bold; }
         .summary-table .col-season { text-align: left; font-size: 0.75rem; color: var(--gray); }
 
-        /* 詳細画面：内訳表 */
         .section-title { font-size: 1rem; font-weight: bold; margin: 1.5rem 0 0.5rem; padding-left: 0.5rem; border-left: 4px solid var(--blue); }
         .detail-table { width: 100%; border-collapse: collapse; background: white; margin-bottom: 1rem; }
         .detail-table th, .detail-table td { border-bottom: 1px solid var(--border); padding: 10px; text-align: left; }
@@ -65,21 +58,18 @@
         .detail-table td:last-child { text-align: right; font-weight: bold; width: 60px; }
         .remark { font-size: 0.75rem; color: var(--blue); display: block; margin-top: 2px; }
 
-        /* 詳細画面：マトリックス */
         .matrix-table { width: 100%; border-collapse: collapse; background: white; font-size: 0.8rem; margin-bottom: 1rem; text-align: center; }
         .matrix-table th, .matrix-table td { border: 1px solid var(--border); padding: 8px 4px; }
         .matrix-table th { background: #f1f5f9; }
         .matrix-val { font-weight: bold; color: var(--blue); }
         .matrix-empty { color: #e5e7eb; }
 
-        /* ローディング */
         .spinner { border: 4px solid #f3f3f3; border-top: 4px solid var(--blue); border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 20px auto; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
     </style>
 </head>
 <body>
 
-<!-- ヘッダー -->
 <header>
     <h1 id="app-title">売上検索アプリ</h1>
     <button class="reload-btn" onclick="app.reset()">再読込</button>
@@ -87,7 +77,6 @@
 <div id="info-bar" class="info-bar hidden"></div>
 
 <div class="container">
-    <!-- 1. 読み込み画面 -->
     <div id="view-load" class="view hidden">
         <div class="file-area">
             <p style="margin-bottom: 1rem; color: var(--gray);">ExcelまたはCSVを選択してください</p>
@@ -96,10 +85,10 @@
                 <input type="file" id="file-input" accept=".xlsx, .xls, .csv" style="display:none" onchange="app.handleFile(this)">
             </label>
             <div id="spinner" class="spinner hidden"></div>
+            <p id="loading-msg" class="hidden" style="margin-top:10px; font-size:0.8rem; color:var(--gray);">データを解析・保存中...</p>
         </div>
     </div>
 
-    <!-- 2. 検索画面 -->
     <div id="view-search" class="view hidden">
         <div class="search-box">
             <input type="search" id="search-input" class="search-input" placeholder="塾名を入力（例: みらい塾）" oninput="app.search(this.value)">
@@ -107,18 +96,12 @@
         <div id="search-results"></div>
     </div>
 
-    <!-- 3. 詳細画面 -->
     <div id="view-detail" class="view hidden">
         <button onclick="app.showSearch()" style="background:none; border:none; color:var(--blue); margin-bottom:1rem; padding:0;">&lt; 検索に戻る</button>
         <h2 id="detail-title" style="margin:0 0 1rem 0;"></h2>
         
-        <!-- カテゴリ集計 -->
         <div id="summary-area"></div>
-
-        <!-- 内訳リスト -->
         <div id="breakdown-area"></div>
-
-        <!-- マトリックス -->
         <div id="matrix-area"></div>
     </div>
 </div>
@@ -133,24 +116,33 @@ const app = {
     data: [],
     meta: {},
 
-    init: () => {
-        const storedData = localStorage.getItem(CONFIG.KEY_DATA);
-        const storedMeta = localStorage.getItem(CONFIG.KEY_META);
+    init: async () => {
+        try {
+            const storedData = await localforage.getItem(CONFIG.KEY_DATA);
+            const storedMeta = await localforage.getItem(CONFIG.KEY_META);
 
-        if (storedData && storedMeta) {
-            app.data = JSON.parse(storedData);
-            app.meta = JSON.parse(storedMeta);
-            app.showInfoBar();
-            app.showSearch();
-        } else {
+            if (storedData && storedMeta) {
+                app.data = storedData;
+                app.meta = storedMeta;
+                app.showInfoBar();
+                app.showSearch();
+            } else {
+                document.getElementById('view-load').classList.remove('hidden');
+            }
+        } catch (err) {
+            console.error('Data load error:', err);
             document.getElementById('view-load').classList.remove('hidden');
         }
     },
 
-    reset: () => {
+    reset: async () => {
         if(confirm('データを削除してファイルを読み直しますか？')) {
-            localStorage.clear();
-            location.reload();
+            try {
+                await localforage.clear();
+                location.reload();
+            } catch (err) {
+                alert('削除に失敗しました: ' + err);
+            }
         }
     },
 
@@ -165,44 +157,48 @@ const app = {
         if (!file) return;
 
         document.getElementById('spinner').classList.remove('hidden');
+        document.getElementById('loading-msg').classList.remove('hidden');
         
         const reader = new FileReader();
-        reader.onload = (e) => {
-            const data = new Uint8Array(e.target.result);
-            const workbook = XLSX.read(data, { type: 'array', cellDates: true });
-            const sheetName = workbook.SheetNames[0];
-            const sheet = workbook.Sheets[sheetName];
-            const json = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
-
-            // ヘッダー除去とデータ整形
-            const rows = json.slice(1).map(row => ({
-                date: app.formatDate(row[0]), // 伝票日付
-                cust1: String(row[1] || ''), // 得意先名1
-                cust2: String(row[2] || ''), // 得意先名2
-                name: String(row[6] || ''),  // 商品名
-                qty: Number(row[7] || 0),    // 数量
-                amount: Number(row[10] || 0) // 金額
-            })).filter(r => r.qty !== 0); // 数量0は除外
-
-            // 保存
-            const now = new Date();
-            const meta = {
-                name: file.name,
-                count: rows.length,
-                at: `${now.getFullYear()}/${now.getMonth()+1}/${now.getDate()} ${now.getHours()}:${String(now.getMinutes()).padStart(2,'0')}`
-            };
-
+        reader.onload = async (e) => {
             try {
-                localStorage.setItem(CONFIG.KEY_DATA, JSON.stringify(rows));
-                localStorage.setItem(CONFIG.KEY_META, JSON.stringify(meta));
+                const data = new Uint8Array(e.target.result);
+                const workbook = XLSX.read(data, { type: 'array', cellDates: true });
+                const sheetName = workbook.SheetNames[0];
+                const sheet = workbook.Sheets[sheetName];
+                const json = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+
+                const rows = json.slice(1).map(row => ({
+                    date: app.formatDate(row[0]),
+                    cust1: String(row[1] || ''),
+                    cust2: String(row[2] || ''),
+                    name: String(row[6] || ''),
+                    qty: Number(row[7] || 0),
+                    amount: Number(row[10] || 0)
+                })).filter(r => r.qty !== 0);
+
+                const now = new Date();
+                const meta = {
+                    name: file.name,
+                    count: rows.length,
+                    at: `${now.getFullYear()}/${now.getMonth()+1}/${now.getDate()} ${now.getHours()}:${String(now.getMinutes()).padStart(2,'0')}`
+                };
+
+                await localforage.setItem(CONFIG.KEY_DATA, rows);
+                await localforage.setItem(CONFIG.KEY_META, meta);
+                
                 app.data = rows;
                 app.meta = meta;
                 app.showInfoBar();
                 app.showSearch();
+
             } catch (err) {
-                alert('データ量が大きすぎて保存できませんでした。');
+                console.error(err);
+                alert('ファイルの解析または保存に失敗しました。\n' + err.message);
+            } finally {
+                document.getElementById('spinner').classList.add('hidden');
+                document.getElementById('loading-msg').classList.add('hidden');
             }
-            document.getElementById('spinner').classList.add('hidden');
         };
         reader.readAsArrayBuffer(file);
     },
@@ -238,7 +234,6 @@ const app = {
 
         const normKey = app.normalize(keyword);
         
-        // 塾名リストをユニーク化して抽出
         const custMap = new Map();
         app.data.forEach(d => {
             const fullName = d.cust1 + d.cust2;
@@ -274,13 +269,10 @@ const app = {
         document.getElementById('detail-title').textContent = custName;
         document.getElementById('app-title').textContent = '詳細情報';
 
-        // 該当塾のデータのみ抽出
         const targetData = app.data.filter(d => (d.cust1 + d.cust2) === custName);
         
-        // 解析実行
         const analyzed = app.analyzeData(targetData);
         
-        // レンダリング
         app.renderSummary(analyzed);
         app.renderBreakdown(analyzed);
         app.renderMatrix(targetData);
@@ -288,13 +280,12 @@ const app = {
 
     analyzeData: (rows) => {
         const cats = {
-            '春期': { qty:0, amt:0, items:{}, totalForSeason: 0 },
-            '夏期': { qty:0, amt:0, items:{}, totalForSeason: 0 },
-            '冬期': { qty:0, amt:0, items:{}, totalForSeason: 0 },
-            '通年': { qty:0, amt:0, items:{}, totalForSeason: 0 }
+            '春期': { qty:0, amt:0, items:{} },
+            '夏期': { qty:0, amt:0, items:{} },
+            '冬期': { qty:0, amt:0, items:{} },
+            '通年': { qty:0, amt:0, items:{} }
         };
 
-        // 旬ごとの集計（発注旬判定用）
         const seasonCounts = { '春期':{}, '夏期':{}, '冬期':{}, '通年':{} };
 
         rows.forEach(r => {
@@ -307,12 +298,10 @@ const app = {
             cats[cat].qty += r.qty;
             cats[cat].amt += r.amount;
             
-            // 商品内訳用
             if (!cats[cat].items[r.name]) cats[cat].items[r.name] = { qty:0, dates:[] };
             cats[cat].items[r.name].qty += r.qty;
             cats[cat].items[r.name].dates.push(r.date);
 
-            // 旬集計
             const jun = app.getJun(r.date);
             if (jun) {
                 if (!seasonCounts[cat][jun]) seasonCounts[cat][jun] = 0;
@@ -320,15 +309,12 @@ const app = {
             }
         });
 
-        // 発注旬ロジック
         const result = {};
         Object.keys(cats).forEach(k => {
             const c = cats[k];
-            // 返品目安
             const returnRate = k === '通年' ? 0.05 : 0.10;
             const returnLimit = Math.ceil(c.qty * returnRate);
 
-            // 発注旬判定
             let seasons = [];
             const total = c.qty;
             if (total > 0) {
@@ -336,7 +322,6 @@ const app = {
                 Object.keys(counts).forEach(junKey => {
                     const ratio = counts[junKey] / total;
                     if (ratio > 0.20) {
-                        // 8,9,10月は除外
                         const m = parseInt(junKey.split('/')[1]);
                         if (![8,9,10].includes(m)) {
                             seasons.push(app.formatJunLabel(k, junKey));
@@ -345,7 +330,6 @@ const app = {
                 });
             }
             
-            // 表示用整形
             let seasonText = '';
             if (seasons.length === 0) {
                 seasonText = k === '夏期' ? '夏期発注:発注なし' : (k + '発注:発注なし');
@@ -358,7 +342,6 @@ const app = {
             result[k] = { ...c, returnLimit, seasonText };
         });
 
-        // 合計計算
         result['合計'] = {
             qty: Object.values(cats).reduce((a,b) => a + b.qty, 0),
             amt: Object.values(cats).reduce((a,b) => a + b.amt, 0),
@@ -460,18 +443,15 @@ const app = {
         });
     },
 
-    // --- マトリックス生成ロジック（修正版） ---
     renderMatrix: (rows) => {
         const area = document.getElementById('matrix-area');
         area.innerHTML = '';
 
-        // マトリックスデータ初期化
         const mElem = { '小5':{}, '小6':{} };
         const mJunior = { '中1':{}, '中2':{}, '中3':{} };
         const subElem = ['国語','算数','理科','社会'];
         const subJunior = ['英語','数学','国語','理科','地理','歴史','社会'];
 
-        // データ集計
         rows.forEach(r => {
             const n = app.normalize(r.name);
             let grade = '';
@@ -485,7 +465,6 @@ const app = {
 
             let subject = '';
             
-            // 1. 標準的な科目判定を実行
             if (n.includes('国語') || n.includes('国')) subject = '国語';
             else if (n.includes('理科') || n.includes('理')) subject = '理科';
             else if (grade.startsWith('小') && (n.includes('算数') || n.includes('算'))) subject = '算数';
@@ -495,11 +474,10 @@ const app = {
             else if (grade.startsWith('中') && (n.match(/歴史/))) subject = '歴史';
             else if (n.includes('社会') || n.includes('社')) subject = '社会';
 
-            // 2. 【修正箇所】中3の特例ルール（上書き処理）
-            // 「歴３・公民・文理・Win Pass」は社会科として一つにまとめる
+            // 中3特例ルール（歴３・公民・文理・Win Passを社会に統合）
             if (grade === '中3') {
                 if (n.includes('歴３') || n.includes('公民') || n.includes('文理') || n.includes('win pass')) {
-                    subject = '社会'; // 他の判定を上書きして社会に統合
+                    subject = '社会';
                 }
             }
 
@@ -514,7 +492,6 @@ const app = {
             }
         });
 
-        // 小学生テーブル描画
         let html = `<div class="section-title">【学年×科目 小学生】</div>
         <table class="matrix-table">
             <thead><tr><th></th>${subElem.map(s=>`<th>${s}</th>`).join('')}</tr></thead>
@@ -529,13 +506,11 @@ const app = {
         });
         html += `</tbody></table>`;
 
-        // 中学生テーブル描画
         html += `<div class="section-title">【学年×科目 中学生】</div>
         <table class="matrix-table">
             <thead><tr><th></th>${subJunior.map(s=>`<th>${s}</th>`).join('')}</tr></thead>
             <tbody>`;
         
-        // 中1・中2
         ['中1','中2'].forEach(g => {
             html += `<tr><th>${g}</th>`;
             subJunior.forEach(s => {
@@ -549,7 +524,6 @@ const app = {
             html += `</tr>`;
         });
 
-        // 中3
         html += `<tr><th>中3</th>`;
         subJunior.forEach(s => {
             if (s === '地理' || s === '歴史') {
@@ -565,10 +539,8 @@ const app = {
     }
 };
 
-// 初期化
 app.init();
 
-// Service Worker登録
 if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js');
 }
