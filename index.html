@@ -1,0 +1,577 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>売上検索Webアプリ</title>
+    <link rel="manifest" href="manifest.json">
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+    <style>
+        :root {
+            --blue: #2563eb;
+            --blue-dark: #1e40af;
+            --green: #16a34a;
+            --bg: #f2f4f7;
+            --gray: #6b7280;
+            --border: #e5e7eb;
+            --white: #ffffff;
+        }
+
+        * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+        body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: #111; }
+        input, select, button { font-size: 16px; }
+
+        /* 共通レイアウト */
+        .hidden { display: none !important; }
+        .container { max-width: 800px; margin: 0 auto; padding: 0; }
+        
+        /* ヘッダー */
+        header { background: var(--blue); color: white; padding: 1rem; position: sticky; top: 0; z-index: 100; box-shadow: 0 2px 4px rgba(0,0,0,0.1); display: flex; justify-content: space-between; align-items: center; }
+        header h1 { margin: 0; font-size: 1.2rem; font-weight: bold; }
+        .reload-btn { background: rgba(255,255,255,0.2); border: none; color: white; padding: 0.5rem 1rem; border-radius: 4px; cursor: pointer; }
+
+        /* データ情報バー */
+        .info-bar { background: var(--blue-dark); color: rgba(255,255,255,0.9); padding: 0.5rem 1rem; font-size: 0.8rem; text-align: center; }
+
+        /* 画面コンテナ */
+        .view { padding: 1rem; }
+
+        /* ファイル読み込み画面 */
+        .file-area { background: white; padding: 2rem; border-radius: 8px; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.05); margin-top: 2rem; }
+        .file-btn { display: inline-block; background: var(--blue); color: white; padding: 1rem 2rem; border-radius: 8px; cursor: pointer; font-weight: bold; }
+        
+        /* 検索画面 */
+        .search-box { display: flex; gap: 8px; margin-bottom: 1rem; }
+        .search-input { flex: 1; padding: 0.8rem; border: 1px solid var(--border); border-radius: 8px; outline: none; }
+        .search-input:focus { border-color: var(--blue); }
+        
+        /* カードリスト */
+        .card { background: white; padding: 1rem; border-radius: 8px; margin-bottom: 0.8rem; box-shadow: 0 1px 3px rgba(0,0,0,0.05); cursor: pointer; border-left: 4px solid transparent; }
+        .card:active { background: #f9fafb; }
+        .card.hit { border-left-color: var(--blue); }
+
+        /* 詳細画面：集計表 */
+        .summary-table { width: 100%; border-collapse: collapse; background: white; font-size: 0.85rem; margin-bottom: 1rem; }
+        .summary-table th, .summary-table td { border: 1px solid var(--border); padding: 6px; text-align: right; }
+        .summary-table th { background: #f8fafc; text-align: center; color: var(--gray); font-weight: normal; }
+        .summary-table .col-cat { text-align: left; font-weight: bold; }
+        .summary-table .col-season { text-align: left; font-size: 0.75rem; color: var(--gray); }
+
+        /* 詳細画面：内訳表 */
+        .section-title { font-size: 1rem; font-weight: bold; margin: 1.5rem 0 0.5rem; padding-left: 0.5rem; border-left: 4px solid var(--blue); }
+        .detail-table { width: 100%; border-collapse: collapse; background: white; margin-bottom: 1rem; }
+        .detail-table th, .detail-table td { border-bottom: 1px solid var(--border); padding: 10px; text-align: left; }
+        .detail-table th { background: #f9fafb; color: var(--gray); font-size: 0.8rem; }
+        .detail-table td:last-child { text-align: right; font-weight: bold; width: 60px; }
+        .remark { font-size: 0.75rem; color: var(--blue); display: block; margin-top: 2px; }
+
+        /* 詳細画面：マトリックス */
+        .matrix-table { width: 100%; border-collapse: collapse; background: white; font-size: 0.8rem; margin-bottom: 1rem; text-align: center; }
+        .matrix-table th, .matrix-table td { border: 1px solid var(--border); padding: 8px 4px; }
+        .matrix-table th { background: #f1f5f9; }
+        .matrix-val { font-weight: bold; color: var(--blue); }
+        .matrix-empty { color: #e5e7eb; }
+
+        /* ローディング */
+        .spinner { border: 4px solid #f3f3f3; border-top: 4px solid var(--blue); border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 20px auto; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+
+<!-- ヘッダー -->
+<header>
+    <h1 id="app-title">売上検索アプリ</h1>
+    <button class="reload-btn" onclick="app.reset()">再読込</button>
+</header>
+<div id="info-bar" class="info-bar hidden"></div>
+
+<div class="container">
+    <!-- 1. 読み込み画面 -->
+    <div id="view-load" class="view hidden">
+        <div class="file-area">
+            <p style="margin-bottom: 1rem; color: var(--gray);">ExcelまたはCSVを選択してください</p>
+            <label class="file-btn">
+                ファイルを選択
+                <input type="file" id="file-input" accept=".xlsx, .xls, .csv" style="display:none" onchange="app.handleFile(this)">
+            </label>
+            <div id="spinner" class="spinner hidden"></div>
+        </div>
+    </div>
+
+    <!-- 2. 検索画面 -->
+    <div id="view-search" class="view hidden">
+        <div class="search-box">
+            <input type="search" id="search-input" class="search-input" placeholder="塾名を入力（例: みらい塾）" oninput="app.search(this.value)">
+        </div>
+        <div id="search-results"></div>
+    </div>
+
+    <!-- 3. 詳細画面 -->
+    <div id="view-detail" class="view hidden">
+        <button onclick="app.showSearch()" style="background:none; border:none; color:var(--blue); margin-bottom:1rem; padding:0;">&lt; 検索に戻る</button>
+        <h2 id="detail-title" style="margin:0 0 1rem 0;"></h2>
+        
+        <!-- カテゴリ集計 -->
+        <div id="summary-area"></div>
+
+        <!-- 内訳リスト -->
+        <div id="breakdown-area"></div>
+
+        <!-- マトリックス -->
+        <div id="matrix-area"></div>
+    </div>
+</div>
+
+<script>
+const CONFIG = {
+    KEY_DATA: 'salesData_v1',
+    KEY_META: 'salesMeta_v1'
+};
+
+const app = {
+    data: [],
+    meta: {},
+
+    init: () => {
+        const storedData = localStorage.getItem(CONFIG.KEY_DATA);
+        const storedMeta = localStorage.getItem(CONFIG.KEY_META);
+
+        if (storedData && storedMeta) {
+            app.data = JSON.parse(storedData);
+            app.meta = JSON.parse(storedMeta);
+            app.showInfoBar();
+            app.showSearch();
+        } else {
+            document.getElementById('view-load').classList.remove('hidden');
+        }
+    },
+
+    reset: () => {
+        if(confirm('データを削除してファイルを読み直しますか？')) {
+            localStorage.clear();
+            location.reload();
+        }
+    },
+
+    showInfoBar: () => {
+        const bar = document.getElementById('info-bar');
+        bar.textContent = `📄 ${app.meta.name} (${app.meta.count.toLocaleString()}件) ${app.meta.at}`;
+        bar.classList.remove('hidden');
+    },
+
+    handleFile: (input) => {
+        const file = input.files[0];
+        if (!file) return;
+
+        document.getElementById('spinner').classList.remove('hidden');
+        
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            const data = new Uint8Array(e.target.result);
+            const workbook = XLSX.read(data, { type: 'array', cellDates: true });
+            const sheetName = workbook.SheetNames[0];
+            const sheet = workbook.Sheets[sheetName];
+            const json = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+
+            // ヘッダー除去とデータ整形
+            const rows = json.slice(1).map(row => ({
+                date: app.formatDate(row[0]), // 伝票日付
+                cust1: String(row[1] || ''), // 得意先名1
+                cust2: String(row[2] || ''), // 得意先名2
+                name: String(row[6] || ''),  // 商品名
+                qty: Number(row[7] || 0),    // 数量
+                amount: Number(row[10] || 0) // 金額
+            })).filter(r => r.qty !== 0); // 数量0は除外
+
+            // 保存
+            const now = new Date();
+            const meta = {
+                name: file.name,
+                count: rows.length,
+                at: `${now.getFullYear()}/${now.getMonth()+1}/${now.getDate()} ${now.getHours()}:${String(now.getMinutes()).padStart(2,'0')}`
+            };
+
+            try {
+                localStorage.setItem(CONFIG.KEY_DATA, JSON.stringify(rows));
+                localStorage.setItem(CONFIG.KEY_META, JSON.stringify(meta));
+                app.data = rows;
+                app.meta = meta;
+                app.showInfoBar();
+                app.showSearch();
+            } catch (err) {
+                alert('データ量が大きすぎて保存できませんでした。');
+            }
+            document.getElementById('spinner').classList.add('hidden');
+        };
+        reader.readAsArrayBuffer(file);
+    },
+
+    formatDate: (val) => {
+        if (!val) return '';
+        if (val instanceof Date) {
+            return `${val.getFullYear()}/${val.getMonth()+1}/${val.getDate()}`;
+        }
+        return String(val);
+    },
+
+    showSearch: () => {
+        document.getElementById('view-load').classList.add('hidden');
+        document.getElementById('view-detail').classList.add('hidden');
+        document.getElementById('view-search').classList.remove('hidden');
+        document.getElementById('app-title').textContent = '塾検索';
+        document.getElementById('search-input').value = '';
+        document.getElementById('search-results').innerHTML = '';
+        document.getElementById('search-input').focus();
+    },
+
+    normalize: (str) => {
+        return str.replace(/[Ａ-Ｚａ-ｚ０-９]/g, s => String.fromCharCode(s.charCodeAt(0) - 0xFEE0))
+                  .replace(/\s+/g, '')
+                  .toLowerCase();
+    },
+
+    search: (keyword) => {
+        const container = document.getElementById('search-results');
+        container.innerHTML = '';
+        if (!keyword) return;
+
+        const normKey = app.normalize(keyword);
+        
+        // 塾名リストをユニーク化して抽出
+        const custMap = new Map();
+        app.data.forEach(d => {
+            const fullName = d.cust1 + d.cust2;
+            const normName = app.normalize(fullName);
+            if (normName.includes(normKey)) {
+                if (!custMap.has(fullName)) {
+                    custMap.set(fullName, { name: fullName, count: 0 });
+                }
+                custMap.get(fullName).count += d.qty;
+            }
+        });
+
+        const hits = Array.from(custMap.values());
+
+        if (hits.length === 0) {
+            container.innerHTML = '<div class="card">該当する塾が見つかりませんでした</div>';
+        } else if (hits.length === 1) {
+            app.showDetail(hits[0].name);
+        } else {
+            hits.forEach(h => {
+                const div = document.createElement('div');
+                div.className = 'card hit';
+                div.innerHTML = `<strong>${h.name}</strong><br><span style="color:var(--gray);font-size:0.8rem">取引冊数: ${h.count.toLocaleString()}冊</span>`;
+                div.onclick = () => app.showDetail(h.name);
+                container.appendChild(div);
+            });
+        }
+    },
+
+    showDetail: (custName) => {
+        document.getElementById('view-search').classList.add('hidden');
+        document.getElementById('view-detail').classList.remove('hidden');
+        document.getElementById('detail-title').textContent = custName;
+        document.getElementById('app-title').textContent = '詳細情報';
+
+        // 該当塾のデータのみ抽出
+        const targetData = app.data.filter(d => (d.cust1 + d.cust2) === custName);
+        
+        // 解析実行
+        const analyzed = app.analyzeData(targetData);
+        
+        // レンダリング
+        app.renderSummary(analyzed);
+        app.renderBreakdown(analyzed);
+        app.renderMatrix(targetData);
+    },
+
+    analyzeData: (rows) => {
+        const cats = {
+            '春期': { qty:0, amt:0, items:{}, totalForSeason: 0 },
+            '夏期': { qty:0, amt:0, items:{}, totalForSeason: 0 },
+            '冬期': { qty:0, amt:0, items:{}, totalForSeason: 0 },
+            '通年': { qty:0, amt:0, items:{}, totalForSeason: 0 }
+        };
+
+        // 旬ごとの集計（発注旬判定用）
+        const seasonCounts = { '春期':{}, '夏期':{}, '冬期':{}, '通年':{} };
+
+        rows.forEach(r => {
+            let cat = '通年';
+            const n = app.normalize(r.name);
+            if (n.match(/春|スプリング|spring/)) cat = '春期';
+            else if (n.match(/夏|サマー|summer/)) cat = '夏期';
+            else if (n.match(/冬|ウィンター|winter/)) cat = '冬期';
+
+            cats[cat].qty += r.qty;
+            cats[cat].amt += r.amount;
+            
+            // 商品内訳用
+            if (!cats[cat].items[r.name]) cats[cat].items[r.name] = { qty:0, dates:[] };
+            cats[cat].items[r.name].qty += r.qty;
+            cats[cat].items[r.name].dates.push(r.date);
+
+            // 旬集計
+            const jun = app.getJun(r.date);
+            if (jun) {
+                if (!seasonCounts[cat][jun]) seasonCounts[cat][jun] = 0;
+                seasonCounts[cat][jun] += r.qty;
+            }
+        });
+
+        // 発注旬ロジック
+        const result = {};
+        Object.keys(cats).forEach(k => {
+            const c = cats[k];
+            // 返品目安
+            const returnRate = k === '通年' ? 0.05 : 0.10;
+            const returnLimit = Math.ceil(c.qty * returnRate);
+
+            // 発注旬判定
+            let seasons = [];
+            const total = c.qty;
+            if (total > 0) {
+                const counts = seasonCounts[k];
+                Object.keys(counts).forEach(junKey => {
+                    const ratio = counts[junKey] / total;
+                    if (ratio > 0.20) {
+                        // 8,9,10月は除外
+                        const m = parseInt(junKey.split('/')[1]);
+                        if (![8,9,10].includes(m)) {
+                            seasons.push(app.formatJunLabel(k, junKey));
+                        }
+                    }
+                });
+            }
+            
+            // 表示用整形
+            let seasonText = '';
+            if (seasons.length === 0) {
+                seasonText = k === '夏期' ? '夏期発注:発注なし' : (k + '発注:発注なし');
+            } else if (seasons.length === 1) {
+                seasonText = seasons[0];
+            } else {
+                seasonText = seasons.map((s, i) => s.replace(':', `${i+1}:`)).join('<br>');
+            }
+
+            result[k] = { ...c, returnLimit, seasonText };
+        });
+
+        // 合計計算
+        result['合計'] = {
+            qty: Object.values(cats).reduce((a,b) => a + b.qty, 0),
+            amt: Object.values(cats).reduce((a,b) => a + b.amt, 0),
+            returnLimit: '-',
+            seasonText: '-'
+        };
+
+        return result;
+    },
+
+    getJun: (dateStr) => {
+        if (!dateStr) return null;
+        const d = new Date(dateStr);
+        if (isNaN(d.getTime())) return null;
+        const m = d.getMonth() + 1;
+        const day = d.getDate();
+        let jun = '上旬';
+        if (day > 20) jun = '下旬';
+        else if (day > 10) jun = '中旬';
+        return `${d.getFullYear()}/${m}${jun}`;
+    },
+
+    formatJunLabel: (cat, junKey) => {
+        const parts = junKey.split('/');
+        const monthJun = parts[1];
+        const m = parseInt(monthJun);
+
+        let prefix = '';
+        if (cat === '通年') {
+            if (m >= 1 && m <= 5) prefix = '新年度発注';
+            else if (m >= 6 && m <= 7) prefix = '夏期発注';
+            else if (m >= 11 && m <= 12) prefix = '冬期発注';
+            else prefix = '期中発注';
+        } else {
+            prefix = cat + '発注';
+        }
+        return `${prefix}:${monthJun}`;
+    },
+
+    renderSummary: (data) => {
+        const area = document.getElementById('summary-area');
+        const cats = ['通年', '春期', '夏期', '冬期', '合計'];
+        let html = `<table class="summary-table">
+            <thead><tr><th>カテゴリ</th><th>冊数</th><th>金額</th><th>返品目安</th><th style="text-align:left">発注旬</th></tr></thead><tbody>`;
+        
+        cats.forEach(c => {
+            const d = data[c];
+            if (!d) return;
+            html += `<tr>
+                <td class="col-cat">${c}教材</td>
+                <td>${d.qty.toLocaleString()}</td>
+                <td>¥${d.amt.toLocaleString()}</td>
+                <td>${d.returnLimit}</td>
+                <td class="col-season">${d.seasonText}</td>
+            </tr>`;
+        });
+        html += '</tbody></table>';
+        area.innerHTML = html;
+    },
+
+    renderBreakdown: (data) => {
+        const area = document.getElementById('breakdown-area');
+        area.innerHTML = '';
+        const cats = ['春期', '夏期', '冬期', '通年'];
+
+        cats.forEach(c => {
+            const d = data[c];
+            if (d.qty === 0) return;
+
+            const items = Object.entries(d.items).map(([name, val]) => ({name, ...val}));
+            items.sort((a,b) => b.qty - a.qty);
+
+            let html = `<div class="section-title">【${c}教材】内訳表</div>`;
+            html += `<table class="detail-table"><tbody>`;
+            
+            items.forEach(item => {
+                let remark = '';
+                if (c === '通年') {
+                    const targetDates = item.dates.filter(dt => {
+                        const m = new Date(dt).getMonth() + 1;
+                        return [8,9,10,11,12,1].includes(m);
+                    });
+                    if (targetDates.length > 0) {
+                        const juns = [...new Set(targetDates.map(dt => {
+                            const parts = app.getJun(dt).split('/');
+                            return parts[1];
+                        }))].sort((a,b) => parseInt(a) - parseInt(b));
+                        remark = `<span class="remark">${juns.join('、')}</span>`;
+                    }
+                }
+
+                html += `<tr>
+                    <td>${item.name}${remark}</td>
+                    <td>${item.qty}</td>
+                </tr>`;
+            });
+            html += `</tbody></table>`;
+            area.innerHTML += html;
+        });
+    },
+
+    // --- マトリックス生成ロジック（修正版） ---
+    renderMatrix: (rows) => {
+        const area = document.getElementById('matrix-area');
+        area.innerHTML = '';
+
+        // マトリックスデータ初期化
+        const mElem = { '小5':{}, '小6':{} };
+        const mJunior = { '中1':{}, '中2':{}, '中3':{} };
+        const subElem = ['国語','算数','理科','社会'];
+        const subJunior = ['英語','数学','国語','理科','地理','歴史','社会'];
+
+        // データ集計
+        rows.forEach(r => {
+            const n = app.normalize(r.name);
+            let grade = '';
+            if (n.match(/小5|小５/)) grade = '小5';
+            else if (n.match(/小6|小６/)) grade = '小6';
+            else if (n.match(/中1|中１/)) grade = '中1';
+            else if (n.match(/中2|中２/)) grade = '中2';
+            else if (n.match(/中3|中３/)) grade = '中3';
+
+            if (!grade) return;
+
+            let subject = '';
+            
+            // 1. 標準的な科目判定を実行
+            if (n.includes('国語') || n.includes('国')) subject = '国語';
+            else if (n.includes('理科') || n.includes('理')) subject = '理科';
+            else if (grade.startsWith('小') && (n.includes('算数') || n.includes('算'))) subject = '算数';
+            else if (grade.startsWith('中') && (n.includes('数学') || n.includes('数'))) subject = '数学';
+            else if (grade.startsWith('中') && (n.includes('英語') || n.includes('英'))) subject = '英語';
+            else if (grade.startsWith('中') && (n.match(/地理/))) subject = '地理';
+            else if (grade.startsWith('中') && (n.match(/歴史/))) subject = '歴史';
+            else if (n.includes('社会') || n.includes('社')) subject = '社会';
+
+            // 2. 【修正箇所】中3の特例ルール（上書き処理）
+            // 「歴３・公民・文理・Win Pass」は社会科として一つにまとめる
+            if (grade === '中3') {
+                if (n.includes('歴３') || n.includes('公民') || n.includes('文理') || n.includes('win pass')) {
+                    subject = '社会'; // 他の判定を上書きして社会に統合
+                }
+            }
+
+            if (subject) {
+                if (grade.startsWith('小')) {
+                    if (!mElem[grade][subject]) mElem[grade][subject] = 0;
+                    mElem[grade][subject] += r.qty;
+                } else {
+                    if (!mJunior[grade][subject]) mJunior[grade][subject] = 0;
+                    mJunior[grade][subject] += r.qty;
+                }
+            }
+        });
+
+        // 小学生テーブル描画
+        let html = `<div class="section-title">【学年×科目 小学生】</div>
+        <table class="matrix-table">
+            <thead><tr><th></th>${subElem.map(s=>`<th>${s}</th>`).join('')}</tr></thead>
+            <tbody>`;
+        ['小5','小6'].forEach(g => {
+            html += `<tr><th>${g}</th>`;
+            subElem.forEach(s => {
+                const v = mElem[g][s];
+                html += `<td>${v ? `<span class="matrix-val">${v}</span>` : '<span class="matrix-empty">0</span>'}</td>`;
+            });
+            html += `</tr>`;
+        });
+        html += `</tbody></table>`;
+
+        // 中学生テーブル描画
+        html += `<div class="section-title">【学年×科目 中学生】</div>
+        <table class="matrix-table">
+            <thead><tr><th></th>${subJunior.map(s=>`<th>${s}</th>`).join('')}</tr></thead>
+            <tbody>`;
+        
+        // 中1・中2
+        ['中1','中2'].forEach(g => {
+            html += `<tr><th>${g}</th>`;
+            subJunior.forEach(s => {
+                if (s === '社会') {
+                    html += `<td><span class="matrix-empty">-</span></td>`;
+                    return;
+                }
+                const v = mJunior[g][s];
+                html += `<td>${v ? `<span class="matrix-val">${v}</span>` : '<span class="matrix-empty">0</span>'}</td>`;
+            });
+            html += `</tr>`;
+        });
+
+        // 中3
+        html += `<tr><th>中3</th>`;
+        subJunior.forEach(s => {
+            if (s === '地理' || s === '歴史') {
+                html += `<td><span class="matrix-empty">-</span></td>`;
+            } else {
+                const v = mJunior['中3'][s];
+                html += `<td>${v ? `<span class="matrix-val">${v}</span>` : '<span class="matrix-empty">0</span>'}</td>`;
+            }
+        });
+        html += `</tr></tbody></table>`;
+
+        area.innerHTML += html;
+    }
+};
+
+// 初期化
+app.init();
+
+// Service Worker登録
+if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('sw.js');
+}
+</script>
+</body>
+</html>
