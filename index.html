@@ -152,76 +152,76 @@ const app = {
         bar.classList.remove('hidden');
     },
 
-handleFile: (input) => {
-    const file = input.files[0];
-    if (!file) return;
+    handleFile: (input) => {
+        const file = input.files[0];
+        if (!file) return;
 
-    // メモリ対策：既存データをクリア
-    app.data = [];
-    
-    document.getElementById('spinner').classList.remove('hidden');
-    
-    const reader = new FileReader();
-    reader.onload = async (e) => {
-        try {
-            const data = new Uint8Array(e.target.result);
-            const workbook = XLSX.read(data, { type: 'array', cellDates: true });
-            const sheetName = workbook.SheetNames[0];
-            const sheet = workbook.Sheets[sheetName];
-            const json = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
-
-            // 軽量化処理：必要な行のみ抽出
-            const rows = [];
-            for (let i = 1; i < json.length; i++) {
-                const row = json[i];
-                const qty = Number(row[7] || 0);
-                if (qty !== 0) {
-                    rows.push({
-                        date: app.formatDate(row[0]),
-                        cust1: String(row[1] || ''),
-                        cust2: String(row[2] || ''),
-                        name: String(row[6] || ''),
-                        qty: qty,
-                        amount: Number(row[10] || 0)
-                    });
-                }
-            }
-
-            const now = new Date();
-            const meta = {
-                name: file.name,
-                count: rows.length,
-                at: `${now.getFullYear()}/${now.getMonth()+1}/${now.getDate()} ${now.getHours()}:${String(now.getMinutes()).padStart(2,'0')}`
-            };
-
-            // メモリ上でデータを設定
-            app.data = rows;
-            app.meta = meta;
-
-            // 保存を試行
+        // メモリ対策：既存データをクリア
+        app.data = [];
+        
+        document.getElementById('spinner').classList.remove('hidden');
+        
+        const reader = new FileReader();
+        reader.onload = async (e) => {
             try {
-                await localforage.setItem(CONFIG.KEY_DATA, rows);
-                await localforage.setItem(CONFIG.KEY_META, meta);
-                console.log('保存成功');
-            } catch (saveErr) {
-                console.error('保存失敗:', saveErr);
-                alert('⚠️ データが大きすぎるため端末保存に失敗しました。\n\n✅ 検索機能は利用できます\n❌ アプリを閉じるとデータは消えます\n\n【推奨】PCでCSV形式に変換してから読み込んでください。');
+                const data = new Uint8Array(e.target.result);
+                const workbook = XLSX.read(data, { type: 'array', cellDates: true });
+                const sheetName = workbook.SheetNames[0];
+                const sheet = workbook.Sheets[sheetName];
+                const json = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+
+                // 軽量化処理：必要な行のみ抽出
+                const rows = [];
+                for (let i = 1; i < json.length; i++) {
+                    const row = json[i];
+                    const qty = Number(row[7] || 0);
+                    if (qty !== 0) {
+                        rows.push({
+                            date: app.formatDate(row[0]),
+                            cust1: String(row[1] || ''),
+                            cust2: String(row[2] || ''),
+                            name: String(row[6] || ''),
+                            qty: qty,
+                            amount: Number(row[10] || 0)
+                        });
+                    }
+                }
+
+                const now = new Date();
+                const meta = {
+                    name: file.name,
+                    count: rows.length,
+                    at: `${now.getFullYear()}/${now.getMonth()+1}/${now.getDate()} ${now.getHours()}:${String(now.getMinutes()).padStart(2,'0')}`
+                };
+
+                // メモリ上でデータを設定
+                app.data = rows;
+                app.meta = meta;
+
+                // 保存を試行
+                try {
+                    await localforage.setItem(CONFIG.KEY_DATA, rows);
+                    await localforage.setItem(CONFIG.KEY_META, meta);
+                    console.log('保存成功');
+                } catch (saveErr) {
+                    console.error('保存失敗:', saveErr);
+                    alert('⚠️ データが大きすぎるため端末保存に失敗しました。\n\n✅ 検索機能は利用できます\n❌ アプリを閉じるとデータは消えます\n\n【推奨】PCでCSV形式に変換してから読み込んでください。');
+                }
+
+                // 保存成功/失敗に関わらず検索画面へ
+                app.showInfoBar();
+                app.showSearch();
+
+            } catch (err) {
+                console.error('解析エラー:', err);
+                alert('❌ ファイルの読み込みに失敗しました。\n\n【原因】メモリ不足の可能性があります\n【解決策】PCで「CSV形式」で保存し直してから読み込んでください');
+            } finally {
+                document.getElementById('spinner').classList.add('hidden');
+                input.value = ''; // 同じファイルを再選択可能にする
             }
-
-            // 保存成功/失敗に関わらず検索画面へ
-            app.showInfoBar();
-            app.showSearch();
-
-        } catch (err) {
-            console.error('解析エラー:', err);
-            alert('❌ ファイルの読み込みに失敗しました。\n\n【原因】メモリ不足の可能性があります\n【解決策】PCで「CSV形式」で保存し直してから読み込んでください');
-        } finally {
-            document.getElementById('spinner').classList.add('hidden');
-            input.value = ''; // 同じファイルを再選択可能にする
-        }
-    };
-    reader.readAsArrayBuffer(file);
-},
+        };
+        reader.readAsArrayBuffer(file);
+    },
 
     formatDate: (val) => {
         if (!val) return '';
@@ -566,9 +566,10 @@ if ('serviceWorker' in navigator) {
 }
 </script>
 
+<!-- バージョン表示（bodyの閉じタグ直前） -->
 <div style="text-align:center;font-size:10px;color:#9ca3af;margin:16px 0;">
   ver: 2024-12-28-fix
 </div>
-    
+
 </body>
 </html>
