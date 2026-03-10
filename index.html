@@ -63,7 +63,7 @@
         .matrix-val { font-weight: bold; color: var(--blue); }
         .matrix-empty { color: #e5e7eb; }
 
-        /* ★科目別色分け（太字・高視認性） */
+        /* 科目別色分け */
         .subject-english { color: #dc2626; font-weight: 700; }
         .subject-math { color: #2563eb; font-weight: 700; }
         .subject-japanese { color: #16a34a; font-weight: 700; }
@@ -298,6 +298,15 @@ const app = {
         app.renderMatrix(targetData);
     },
 
+    // ★新規追加：カテゴリ判定を一元化
+    getCategory: (name) => {
+        const n = app.normalize(name);
+        if (n.match(/春|スプリング|spring/)) return '春期';
+        if (n.match(/夏|サマー|summer/)) return '夏期';
+        if (n.match(/冬|ウィンター|winter/)) return '冬期';
+        return '通年';
+    },
+
     analyzeData: (rows) => {
         const cats = {
             '春期': { qty:0, amt:0, items:{} },
@@ -309,11 +318,8 @@ const app = {
         const seasonCounts = { '春期':{}, '夏期':{}, '冬期':{}, '通年':{} };
 
         rows.forEach(r => {
-            let cat = '通年';
-            const n = app.normalize(r.name);
-            if (n.match(/春|スプリング|spring/)) cat = '春期';
-            else if (n.match(/夏|サマー|summer/)) cat = '夏期';
-            else if (n.match(/冬|ウィンター|winter/)) cat = '冬期';
+            // ★修正：共通のカテゴリ判定を使用
+            const cat = app.getCategory(r.name);
 
             cats[cat].qty += r.qty;
             cats[cat].amt += r.amount;
@@ -419,57 +425,67 @@ const app = {
         area.innerHTML = html;
     },
 
-    // ★新規追加：商品名から学年・科目を判定する共通関数
+    // ★完全修正版：商品名から学年・科目を判定
     classifyProduct: (name) => {
         const n = app.normalize(name);
         let grade = '';
         let subject = '';
 
-        // 季節教材は判定対象外
-        if (n.match(/春|スプリング|spring|夏|サマー|summer|冬|ウィンター|winter/)) {
-            return null;
+        // 1. カテゴリ判定（季節教材除外）
+        if (app.getCategory(name) !== '通年') {
+            return null; // 季節教材は対象外
         }
 
-        // 学年判定
+        // 2. 学年判定
         if (n.match(/小5|小５/)) grade = '小5';
         else if (n.match(/小6|小６/)) grade = '小6';
         else if (n.match(/中1|中１/)) grade = '中1';
         else if (n.match(/中2|中２/)) grade = '中2';
         else if (n.match(/中3|中３/)) grade = '中3';
 
-        if (!grade) return null;
+        // 3. 科目判定（具体的→抽象的の順序で実行）
+        // 2文字キーワード優先
+        if (n.includes('英語')) subject = '英語';
+        else if (n.includes('数学')) subject = '数学';
+        else if (n.includes('国語')) subject = '国語';
+        else if (n.includes('理科')) subject = '理科';
+        else if (n.includes('算数')) subject = '算数';
+        else if (n.includes('社会')) subject = '社会';
+        // 地理・歴史判定（強化版）
+        else if (n.match(/地理[ⅠⅡ12１２]?/)) subject = '地理';
+        else if (n.match(/歴史[ⅠⅡ12１２]?/)) subject = '歴史';
+        // 1文字キーワード（最後に実行）
+        else if (n.includes('英')) subject = '英語';
+        else if (n.includes('数')) subject = '数学';
+        else if (n.includes('国')) subject = '国語';
+        else if (n.includes('理') && !n.includes('文理') && !n.includes('地理')) subject = '理科';
+        else if (n.includes('算')) subject = '算数';
+        else if (n.includes('社')) subject = '社会';
 
-        // 科目判定
-        if (n.includes('国語') || n.includes('国')) subject = '国語';
-        else if (n.includes('理科') || n.includes('理')) subject = '理科';
-        else if (grade.startsWith('小') && (n.includes('算数') || n.includes('算'))) subject = '算数';
-        else if (grade.startsWith('中') && (n.includes('数学') || n.includes('数'))) subject = '数学';
-        else if (grade.startsWith('中') && (n.includes('英語') || n.includes('英'))) subject = '英語';
-        else if (grade.startsWith('中') && n.match(/地理[ⅠⅡ12１２]?/)) subject = '地理';
-        else if (grade.startsWith('中') && n.match(/歴史[ⅠⅡ12１２]?/)) subject = '歴史';
-        else if (n.includes('社会') || n.includes('社')) subject = '社会';
-
-        // 中3特例ルール（Win Pass、歴３、公民、文理を社会に統合）
+        // 4. 中3特例ルール（条件付き適用）
         if (grade === '中3') {
-            if (n.includes('歴３') || n.includes('公民') || n.includes('文理') || n.includes('winpass')) {
-                subject = '社会';
+            // ★重要：既に主要科目と判定された場合は上書きしない
+            if (!['英語', '数学', '国語', '理科'].includes(subject)) {
+                if (n.includes('歴３') || n.includes('公民') || n.includes('文理')) {
+                    subject = '社会';
+                }
             }
         }
 
+        // 学年がなくても科目があれば結果を返す（色分け用）
         return subject ? { grade, subject } : null;
     },
 
-    // ★新規追加：科目から色クラスを取得
     getSubjectColor: (subject) => {
         const colorMap = {
             '英語': 'subject-english',
             '数学': 'subject-math',
-            '算数': 'subject-math',        // 算数も数学と同じ青色
+            '算数': 'subject-math',
             '国語': 'subject-japanese',
             '理科': 'subject-science',
             '社会': 'subject-social',
-            '地理': 'subject-social',      // 地理も社会色
-            '歴史': 'subject-social'       // 歴史も社会色
+            '地理': 'subject-social',
+            '歴史': 'subject-social'
         };
         return colorMap[subject] || '';
     },
@@ -505,7 +521,6 @@ const app = {
                     }
                 }
 
-                // ★色分け判定を実行
                 const info = app.classifyProduct(item.name);
                 const colorClass = info ? app.getSubjectColor(info.subject) : '';
 
@@ -529,10 +544,11 @@ const app = {
         const subJunior = ['英語','数学','国語','理科','地理','歴史','社会'];
 
         rows.forEach(r => {
-            // ★共通判定ロジックを使用
+            // ★修正：共通の判定ロジックを使用
             const info = app.classifyProduct(r.name);
             
-            if (!info) return; // 判定対象外ならスキップ
+            // 判定不可、または学年がない場合はマトリックスに集計できないのでスキップ
+            if (!info || !info.grade) return;
 
             const { grade, subject } = info;
 
@@ -600,7 +616,7 @@ if ('serviceWorker' in navigator) {
 </script>
 
 <div style="text-align:center;font-size:10px;color:#9ca3af;margin:16px 0;">
-  ver: 2026-03-10-breakdown-color
+  ver: 2024-12-28-complete-fix
 </div>
 
 </body>
