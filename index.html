@@ -6,7 +6,6 @@
     <title>売上検索Webアプリ</title>
     <link rel="manifest" href="manifest.json">
     <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
-    <!-- 大容量データ保存用ライブラリ -->
     <script src="https://cdn.jsdelivr.net/npm/localforage@1.10.0/dist/localforage.min.js"></script>
     <style>
         :root {
@@ -63,6 +62,13 @@
         .matrix-table th { background: #f1f5f9; }
         .matrix-val { font-weight: bold; color: var(--blue); }
         .matrix-empty { color: #e5e7eb; }
+
+        /* ★科目別色分け（太字・高視認性） */
+        .subject-english { color: #dc2626; font-weight: 700; }
+        .subject-math { color: #2563eb; font-weight: 700; }
+        .subject-japanese { color: #16a34a; font-weight: 700; }
+        .subject-science { color: #ea580c; font-weight: 700; }
+        .subject-social { color: #92400e; font-weight: 700; }
 
         .spinner { border: 4px solid #f3f3f3; border-top: 4px solid var(--blue); border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 20px auto; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
@@ -199,7 +205,6 @@ const app = {
                 try {
                     await localforage.setItem(CONFIG.KEY_DATA, rows);
                     await localforage.setItem(CONFIG.KEY_META, meta);
-                    console.log('保存成功');
                 } catch (saveErr) {
                     console.error('保存失敗:', saveErr);
                     alert('⚠️ データが大きすぎるため端末保存に失敗しました。\n\n✅ 検索機能は利用できます\n❌ アプリを閉じるとデータは消えます\n\n【推奨】PCでCSV形式に変換してから読み込んでください。');
@@ -268,7 +273,6 @@ const app = {
         if (hits.length === 0) {
             container.innerHTML = '<div class="card">該当する塾が見つかりませんでした</div>';
         } else {
-            // ★修正箇所：1件でも複数件でも必ずカードを表示してタップ待ちにする
             hits.forEach(h => {
                 const div = document.createElement('div');
                 div.className = 'card hit';
@@ -337,11 +341,8 @@ const app = {
                 const counts = seasonCounts[k];
                 Object.keys(counts).forEach(junKey => {
                     const ratio = counts[junKey] / total;
-                    if (ratio > 0.20) {
-                        const m = parseInt(junKey.split('/')[1]);
-                        if (![8,9,10].includes(m)) {
-                            seasons.push(app.formatJunLabel(k, junKey));
-                        }
+                    if (ratio > 0.15) { 
+                        seasons.push(app.formatJunLabel(k, junKey));
                     }
                 });
             }
@@ -418,6 +419,61 @@ const app = {
         area.innerHTML = html;
     },
 
+    // ★新規追加：商品名から学年・科目を判定する共通関数
+    classifyProduct: (name) => {
+        const n = app.normalize(name);
+        let grade = '';
+        let subject = '';
+
+        // 季節教材は判定対象外
+        if (n.match(/春|スプリング|spring|夏|サマー|summer|冬|ウィンター|winter/)) {
+            return null;
+        }
+
+        // 学年判定
+        if (n.match(/小5|小５/)) grade = '小5';
+        else if (n.match(/小6|小６/)) grade = '小6';
+        else if (n.match(/中1|中１/)) grade = '中1';
+        else if (n.match(/中2|中２/)) grade = '中2';
+        else if (n.match(/中3|中３/)) grade = '中3';
+
+        if (!grade) return null;
+
+        // 科目判定
+        if (n.includes('国語') || n.includes('国')) subject = '国語';
+        else if (n.includes('理科') || n.includes('理')) subject = '理科';
+        else if (grade.startsWith('小') && (n.includes('算数') || n.includes('算'))) subject = '算数';
+        else if (grade.startsWith('中') && (n.includes('数学') || n.includes('数'))) subject = '数学';
+        else if (grade.startsWith('中') && (n.includes('英語') || n.includes('英'))) subject = '英語';
+        else if (grade.startsWith('中') && n.match(/地理[ⅠⅡ12１２]?/)) subject = '地理';
+        else if (grade.startsWith('中') && n.match(/歴史[ⅠⅡ12１２]?/)) subject = '歴史';
+        else if (n.includes('社会') || n.includes('社')) subject = '社会';
+
+        // 中3特例ルール（Win Pass、歴３、公民、文理を社会に統合）
+        if (grade === '中3') {
+            if (n.includes('歴３') || n.includes('公民') || n.includes('文理') || n.includes('winpass')) {
+                subject = '社会';
+            }
+        }
+
+        return subject ? { grade, subject } : null;
+    },
+
+    // ★新規追加：科目から色クラスを取得
+    getSubjectColor: (subject) => {
+        const colorMap = {
+            '英語': 'subject-english',
+            '数学': 'subject-math',
+            '算数': 'subject-math',        // 算数も数学と同じ青色
+            '国語': 'subject-japanese',
+            '理科': 'subject-science',
+            '社会': 'subject-social',
+            '地理': 'subject-social',      // 地理も社会色
+            '歴史': 'subject-social'       // 歴史も社会色
+        };
+        return colorMap[subject] || '';
+    },
+
     renderBreakdown: (data) => {
         const area = document.getElementById('breakdown-area');
         area.innerHTML = '';
@@ -449,8 +505,12 @@ const app = {
                     }
                 }
 
+                // ★色分け判定を実行
+                const info = app.classifyProduct(item.name);
+                const colorClass = info ? app.getSubjectColor(info.subject) : '';
+
                 html += `<tr>
-                    <td>${item.name}${remark}</td>
+                    <td><span class="${colorClass}">${item.name}</span>${remark}</td>
                     <td>${item.qty}</td>
                 </tr>`;
             });
@@ -469,42 +529,19 @@ const app = {
         const subJunior = ['英語','数学','国語','理科','地理','歴史','社会'];
 
         rows.forEach(r => {
-            const n = app.normalize(r.name);
-            let grade = '';
-            if (n.match(/小5|小５/)) grade = '小5';
-            else if (n.match(/小6|小６/)) grade = '小6';
-            else if (n.match(/中1|中１/)) grade = '中1';
-            else if (n.match(/中2|中２/)) grade = '中2';
-            else if (n.match(/中3|中３/)) grade = '中3';
-
-            if (!grade) return;
-
-            let subject = '';
+            // ★共通判定ロジックを使用
+            const info = app.classifyProduct(r.name);
             
-            if (n.includes('国語') || n.includes('国')) subject = '国語';
-            else if (n.includes('理科') || n.includes('理')) subject = '理科';
-            else if (grade.startsWith('小') && (n.includes('算数') || n.includes('算'))) subject = '算数';
-            else if (grade.startsWith('中') && (n.includes('数学') || n.includes('数'))) subject = '数学';
-            else if (grade.startsWith('中') && (n.includes('英語') || n.includes('英'))) subject = '英語';
-            else if (grade.startsWith('中') && (n.match(/地理/))) subject = '地理';
-            else if (grade.startsWith('中') && (n.match(/歴史/))) subject = '歴史';
-            else if (n.includes('社会') || n.includes('社')) subject = '社会';
+            if (!info) return; // 判定対象外ならスキップ
 
-            // 中3特例ルール（歴３・公民・文理・Win Passを社会に統合）
-            if (grade === '中3') {
-                if (n.includes('歴３') || n.includes('公民') || n.includes('文理') || n.includes('win pass')) {
-                    subject = '社会';
-                }
-            }
+            const { grade, subject } = info;
 
-            if (subject) {
-                if (grade.startsWith('小')) {
-                    if (!mElem[grade][subject]) mElem[grade][subject] = 0;
-                    mElem[grade][subject] += r.qty;
-                } else {
-                    if (!mJunior[grade][subject]) mJunior[grade][subject] = 0;
-                    mJunior[grade][subject] += r.qty;
-                }
+            if (grade.startsWith('小')) {
+                if (!mElem[grade][subject]) mElem[grade][subject] = 0;
+                mElem[grade][subject] += r.qty;
+            } else {
+                if (!mJunior[grade][subject]) mJunior[grade][subject] = 0;
+                mJunior[grade][subject] += r.qty;
             }
         });
 
@@ -562,9 +599,8 @@ if ('serviceWorker' in navigator) {
 }
 </script>
 
-<!-- バージョン表示 -->
 <div style="text-align:center;font-size:10px;color:#9ca3af;margin:16px 0;">
-  ver: 2024-12-28-search-fix
+  ver: 2024-12-28-breakdown-color
 </div>
 
 </body>
